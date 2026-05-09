@@ -14,12 +14,23 @@ run:
 
 # ── Server ───────────────────────────────────────────────────────────────────
 
-build-server:
+build-server: web-build
 	CGO_ENABLED=0 go build -o $(SERVER_BINARY) ./cmd/pulse-server/
 
 dev-server:
 	PULSE_LOG_FORMAT=text PULSE_LOG_LEVEL=debug PULSE_DB_PATH=$(PULSE_DB_PATH) \
 	go run ./cmd/pulse-server/
+
+# ── Web (frontend) ────────────────────────────────────────────────────────────
+
+web-install:
+	cd web && npm install
+
+web-build:
+	cd web && npm run build
+
+web-dev:
+	cd web && npm run dev
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -58,6 +69,6 @@ lint:
 
 clean:
 	rm -f $(BINARY) $(SERVER_BINARY)
-	rm -rf $(DIST)
+	rm -rf $(DIST) web/dist
 
-.PHONY: build run build-server dev-server test gen-sqlc build-all lint clean
+.PHONY: build run build-server dev-server web-install web-build web-dev test gen-sqlc build-all lint clean

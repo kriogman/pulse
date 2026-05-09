@@ -1,5 +1,5 @@
-# Binarios compilados
-dist/
+# Binarios compilados (solo raíz)
+/dist/
 /pulse
 /pulse-server
 

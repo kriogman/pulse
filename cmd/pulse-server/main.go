@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +27,7 @@ import (
 	"github.com/kriogman/pulse/internal/store"
 	sqlitestore "github.com/kriogman/pulse/internal/store/sqlite"
 	"github.com/kriogman/pulse/migrations"
+	webui "github.com/kriogman/pulse/web"
 )
 
 func main() {
@@ -138,7 +142,30 @@ func buildRouter(
 		EnableOpenMetrics: true,
 	}))
 
+	distFS, err := fs.Sub(webui.FS, "dist")
+	if err != nil {
+		panic("web/dist no encontrado: " + err.Error())
+	}
+	r.Handle("/*", spaHandler(distFS))
+
 	return r
+}
+
+// spaHandler sirve archivos estáticos del frontend. Para rutas desconocidas
+// devuelve index.html para que React Router gestione la navegación client-side.
+func spaHandler(fsys fs.FS) http.Handler {
+	srv := http.FileServer(http.FS(fsys))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		if p == "" {
+			p = "index.html"
+		}
+		if _, err := fsys.Open(p); err != nil {
+			http.ServeFileFS(w, r, fsys, "index.html")
+			return
+		}
+		srv.ServeHTTP(w, r)
+	})
 }
 
 type healthBody struct {
