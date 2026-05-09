@@ -1,104 +1,202 @@
-// Package main es el punto de entrada del programa.
-//
-// Por qué cmd/pulse/main.go y no solo main.go en la raíz:
-//
-//   La convención Go para proyectos con múltiples binarios (o que podrían tenerlos)
-//   es poner cada ejecutable en cmd/<nombre>/main.go.
-//
-//   Estructura de carpetas en proyectos Go:
-//     cmd/      → Puntos de entrada. Cada subdirectorio = un binario compilable.
-//                 Solo contiene main.go + wiring de dependencias. Lógica mínima.
-//     internal/ → Paquetes privados del módulo. No importables desde fuera.
-//                 Aquí va la lógica de negocio: config, checker, etc.
-//     pkg/      → Paquetes públicos reutilizables por otros módulos.
-//                 En este proyecto no tenemos (es un CLI, no una librería).
-//
-//   Este diseño separa "qué hace el programa" (internal/) de
-//   "cómo se arranca" (cmd/), facilitando tests y futuras extensiones.
+// Package main es el punto de entrada del CLI pulse.
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
-	"github.com/your-username/pulse/internal/checker"
-	"github.com/your-username/pulse/internal/config"
+
+	"github.com/kriogman/pulse/internal/checker"
+	"github.com/kriogman/pulse/internal/config"
+	"github.com/kriogman/pulse/internal/domain"
+	sqlitestore "github.com/kriogman/pulse/internal/store/sqlite"
+	"github.com/kriogman/pulse/migrations"
 )
 
 func main() {
-	// rootCmd es el comando raíz ("pulse").
-	// Cobra estructura los CLI como un árbol de comandos.
 	rootCmd := &cobra.Command{
 		Use:   "pulse",
-		Short: "pulse chequea el estado de endpoints HTTP",
-		Long: `pulse lee una lista de endpoints desde un fichero YAML
-y los chequea en paralelo, reportando el estado de cada uno.
-
-Ejemplo:
-  pulse check -c pulse.yaml
-  pulse check --format json --timeout 10`,
+		Short: "pulse — herramienta de health check para endpoints HTTP",
 	}
 
-	// Declaramos las variables donde Cobra almacenará los flags.
-	// Viven aquí (en el closure de la función que construye checkCmd)
-	// para que RunE pueda acceder a ellas.
+	// Flag global: ruta a la BD SQLite.
+	// Si el servidor está corriendo, CLI y servidor comparten la misma BD (WAL mode).
+	var dbPath string
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db",
+		envStr("PULSE_DB_PATH", "./pulse.db"),
+		"ruta a la base de datos SQLite (env: PULSE_DB_PATH)")
+
+	rootCmd.AddCommand(
+		newCheckCmd(),
+		newImportCmd(&dbPath),
+		newListCmd(&dbPath),
+	)
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// ── check ─────────────────────────────────────────────────────────────────
+
+func newCheckCmd() *cobra.Command {
 	var configPath string
 	var timeoutSecs int
 	var format string
 
-	checkCmd := &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Chequea todos los endpoints definidos en el fichero de configuración",
-		// RunE es como Run pero permite devolver un error.
-		// Cobra imprimirá el error y el "uso" del comando automáticamente.
-		// Usamos RunE en lugar de Run siempre que podamos devolver un error.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Paso 1: carga de configuración.
-			// Si Load falla, devolvemos el error envuelto con contexto.
 			cfg, err := config.Load(configPath)
 			if err != nil {
-				// fmt.Errorf con %w preserva el error original para que
-				// el llamante pueda usar errors.Is() o errors.As().
 				return fmt.Errorf("cargando configuración: %w", err)
 			}
-
-			// Paso 2: ejecutar checks en paralelo.
 			results := checker.RunAll(cfg.Targets, timeoutSecs)
-
-			// Paso 3: mostrar resultados.
-			allOK := checker.PrintResults(results, format)
-
-			// Paso 4: exit code.
-			// RunE no puede controlar el exit code directamente.
-			// Usamos os.Exit(1) para indicar fallo cuando algún check falló.
-			// Esto es útil en CI: `pulse check` retornará 1 si hay fallos.
-			//
-			// NOTA: os.Exit omite defer's — aquí no hay ninguno, así que es seguro.
-			if !allOK {
+			if !checker.PrintResults(results, format) {
 				os.Exit(1)
 			}
 			return nil
 		},
 	}
 
-	// Registramos los flags del subcomando.
-	// StringVarP = flag de tipo string, con nombre largo y corto (-c / --config).
-	// IntVarP    = flag de tipo int, con nombre largo y corto (-t / --timeout).
-	// StringVar  = flag de tipo string, solo nombre largo (--format).
-	checkCmd.Flags().StringVarP(&configPath, "config", "c", "pulse.yaml",
-		"ruta al fichero de configuración YAML")
-	checkCmd.Flags().IntVarP(&timeoutSecs, "timeout", "t", 5,
-		"timeout global en segundos para cada petición")
-	checkCmd.Flags().StringVar(&format, "format", "text",
-		"formato de salida: 'text' (default) o 'json'")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "pulse.yaml", "ruta al fichero YAML")
+	cmd.Flags().IntVarP(&timeoutSecs, "timeout", "t", 5, "timeout en segundos por petición")
+	cmd.Flags().StringVar(&format, "format", "text", "formato de salida: text | json")
+	return cmd
+}
 
-	rootCmd.AddCommand(checkCmd)
+// ── import ────────────────────────────────────────────────────────────────
 
-	// Execute parsea os.Args[1:] y ejecuta el comando correspondiente.
-	// Si hay un error de parsing o RunE devuelve error, Cobra lo imprime.
-	if err := rootCmd.Execute(); err != nil {
-		// Cobra ya imprimió el error; solo necesitamos el exit code.
-		os.Exit(1)
+func newImportCmd(dbPath *string) *cobra.Command {
+	var fromFile string
+
+	cmd := &cobra.Command{
+		Use:   "import",
+		Short: "Importa monitores desde un fichero YAML a la base de datos (idempotente por nombre)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(fromFile)
+			if err != nil {
+				return fmt.Errorf("cargando %s: %w", fromFile, err)
+			}
+
+			db, err := sqlitestore.Open(*dbPath)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			if err := sqlitestore.RunMigrations(db, migrations.FS); err != nil {
+				return err
+			}
+
+			repo := sqlitestore.NewMonitorRepository(db)
+			ctx := context.Background()
+
+			existing, err := repo.List(ctx)
+			if err != nil {
+				return fmt.Errorf("listando monitores existentes: %w", err)
+			}
+			byName := make(map[string]*domain.Monitor, len(existing))
+			for _, m := range existing {
+				byName[m.Name] = m
+			}
+
+			for _, t := range cfg.Targets {
+				m := yamlTargetToMonitor(t)
+				now := time.Now()
+
+				if prev, ok := byName[t.Name]; ok {
+					m.ID = prev.ID
+					m.CreatedAt = prev.CreatedAt
+					m.UpdatedAt = now
+					if err := repo.Update(ctx, m); err != nil {
+						return fmt.Errorf("actualizando monitor %q: %w", t.Name, err)
+					}
+					fmt.Printf("actualizado: %s\n", t.Name)
+				} else {
+					m.ID = ulid.Make().String()
+					m.CreatedAt = now
+					m.UpdatedAt = now
+					if err := repo.Create(ctx, m); err != nil {
+						return fmt.Errorf("creando monitor %q: %w", t.Name, err)
+					}
+					fmt.Printf("creado:      %s\n", t.Name)
+				}
+			}
+			return nil
+		},
 	}
+
+	cmd.Flags().StringVar(&fromFile, "from", "pulse.yaml", "fichero YAML de origen")
+	return cmd
+}
+
+// ── list ──────────────────────────────────────────────────────────────────
+
+func newListCmd(dbPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "Lista los monitores configurados en la base de datos",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := sqlitestore.Open(*dbPath)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			repo := sqlitestore.NewMonitorRepository(db)
+			monitors, err := repo.List(context.Background())
+			if err != nil {
+				return fmt.Errorf("listando monitores: %w", err)
+			}
+
+			if len(monitors) == 0 {
+				fmt.Println("No hay monitores configurados. Usa 'pulse import --from pulse.yaml'.")
+				return nil
+			}
+
+			fmt.Printf("%-26s %-20s %-8s %-10s %s\n", "ID", "NOMBRE", "TIPO", "ESTADO", "TARGET")
+			fmt.Printf("%-26s %-20s %-8s %-10s %s\n",
+				"──────────────────────────", "────────────────────",
+				"────────", "──────────", "──────────────────────────────")
+			for _, m := range monitors {
+				status := "activo"
+				if !m.Enabled {
+					status = "pausado"
+				}
+				fmt.Printf("%-26s %-20s %-8s %-10s %s\n",
+					m.ID, m.Name, string(m.Type), status, m.Target)
+			}
+			return nil
+		},
+	}
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────
+
+func yamlTargetToMonitor(t config.Target) *domain.Monitor {
+	return &domain.Monitor{
+		Name:        t.Name,
+		Type:        domain.MonitorTypeHTTP,
+		Target:      t.URL,
+		IntervalSec: 60,   // default; el YAML no tiene campo interval
+		TimeoutMs:   5000, // default; el YAML no tiene campo timeout
+		Config: map[string]any{
+			"expected_status": t.ExpectedStatus,
+			"max_latency_ms":  t.MaxLatencyMs,
+		},
+		Enabled: true,
+	}
+}
+
+func envStr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

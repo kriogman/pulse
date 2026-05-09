@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-username/pulse/internal/config"
+	"github.com/kriogman/pulse/internal/config"
 )
 
 // TestCheckOne_OK verifica el camino feliz: servidor responde con el status esperado.

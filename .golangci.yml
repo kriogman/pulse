@@ -1,0 +1,34 @@
+linters:
+  enable:
+    - errcheck
+    - gocritic
+    - gosec
+    - revive
+    - gofumpt
+    - govet
+    - staticcheck
+    - unused
+    - bodyclose
+    - noctx
+
+linters-settings:
+  revive:
+    severity: warning
+    rules:
+      - name: exported
+      - name: var-naming
+      - name: unused-parameter
+  gosec:
+    excludes:
+      - G104 # audit errors — manejamos explícitamente
+  errcheck:
+    exclude-functions:
+      - (io.Closer).Close
+      - (*database/sql.Tx).Rollback
+
+issues:
+  exclude-rules:
+    - path: "_test\\.go"
+      linters:
+        - gosec
+        - errcheck

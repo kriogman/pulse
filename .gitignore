@@ -1,0 +1,19 @@
+# Binarios compilados
+dist/
+/pulse
+/pulse-server
+
+# Base de datos local
+*.db
+*.db-wal
+*.db-shm
+
+# Configuración local de Claude Code
+.claude/settings.local.json
+
+# Go
+*.test
+*.out
+
+# Editor
+.DS_Store

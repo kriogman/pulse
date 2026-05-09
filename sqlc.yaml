@@ -1,0 +1,15 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "internal/store/queries/"
+    schema: "migrations/0001_init.up.sql"
+    gen:
+      go:
+        package: "sqlcdb"
+        out: "internal/store/sqlcdb"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: false
+        emit_exact_table_names: false
+        emit_pointers_for_null_types: true
+        null_str: "NullString"

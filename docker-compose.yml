@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  pulse-server:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - pulse-data:/data
+    environment:
+      PULSE_DB_PATH: /data/pulse.db
+      PULSE_LISTEN_ADDR: ":8080"
+      PULSE_LOG_LEVEL: info
+      PULSE_LOG_FORMAT: json
+      PULSE_CHECKS_RETENTION_DAYS: "90"
+    restart: unless-stopped
+
+volumes:
+  pulse-data:
