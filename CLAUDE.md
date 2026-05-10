@@ -1,58 +1,109 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guía para Claude Code al trabajar con este repositorio.
 
 ## Comandos de desarrollo
 
 ```bash
-make build          # Compila ./pulse para la plataforma actual
-make test           # go test -v -race ./... (todos los paquetes)
-make run            # go run ./cmd/pulse/ check (sin compilar)
-make build-all      # Cross-compila a linux/amd64, darwin/arm64, windows/amd64
+# ── Go ──────────────────────────────────────────────────────────────────────
+make build            # Compila CLI → ./pulse
+make build-server     # Compila servidor → ./pulse-server (requiere web-build primero)
+make test             # go test -v -race ./...
+make lint             # golangci-lint run ./...
 
-# Test de un solo caso
-go test -v -run TestNombreDelTest ./internal/checker/
-go test -v -run TestNombreDelTest ./internal/config/
+# Servidor en modo desarrollo (sin necesidad de compilar el frontend)
+make dev-server       # API en :8080, logs en texto, BD en ./pulse.db
 
-# Primera vez o tras cambiar dependencias
-go mod tidy
+# ── Frontend ─────────────────────────────────────────────────────────────────
+make web-install      # npm install (solo primera vez o tras cambiar deps)
+make web-build        # tsc + vite build → web/dist/
+make web-dev          # Vite dev server en :5173, proxy de /api → :8080
+
+# ── Ambos en dev ─────────────────────────────────────────────────────────────
+# Terminal 1: make dev-server
+# Terminal 2: make web-dev
+
+# ── Tests aislados ────────────────────────────────────────────────────────────
+go test -v -race -run TestNombreDelTest ./internal/api/
+go test -v -race ./internal/store/sqlite/
+
+# ── Dependencias ─────────────────────────────────────────────────────────────
+go mod tidy           # Tras añadir/quitar imports
+cd web && npm install # Tras cambiar package.json
 ```
-
-Go debe estar instalado ([go.dev/dl](https://go.dev/dl/), v1.21+). Tras clonar, ejecutar `go mod tidy` para descargar dependencias.
 
 ## Arquitectura
 
-CLI de un único subcomando (`check`) con tres capas:
+Repositorio multi-binario con arquitectura hexagonal:
 
 ```
-cmd/pulse/main.go          → Wiring: Cobra, flags, orquesta config + checker
-internal/config/config.go  → Lee pulse.yaml → struct Config{Targets []Target}
-internal/checker/checker.go → HTTP GET en paralelo, evalúa status+latencia, imprime
+cmd/
+  pulse/           → CLI: check / import / list (Cobra)
+  pulse-server/    → Daemon: HTTP API + Scheduler + métricas
+
+internal/
+  domain/          → Entidades puras (Monitor, Check, CheckStats). Sin deps externas.
+  store/           → Interfaces de repositorio (ports)
+  store/sqlite/    → Implementación SQLite (adapter). WAL mode, pure-Go (sin CGO).
+  api/             → Handlers huma v2, DTOs, mappers domain↔DTO
+  scheduler/       → Goroutine por monitor con time.Ticker, reload incremental
+  checker/         → Lógica HTTP pura: CheckMonitor(ctx, *Monitor) → Check
+  observability/   → slog, Prometheus metrics, OTel noop tracer
+  config/          → Carga pulse.yaml (usado solo por CLI)
+
+migrations/        → SQL embebido con go:embed, runner propio (sin CGO)
+web/               → Frontend React+TypeScript+Vite (embebido en el binario server)
+  src/api/         → Cliente fetch tipado contra DTOs Go
+  src/components/  → StatusBadge, MonitorForm, ConfirmDialog, UptimeStats, ResponseTimeChart
+  src/pages/       → MonitorListPage, CheckHistoryPage
+  embed.go         → //go:embed all:dist → var FS embed.FS
 ```
 
-**Flujo de ejecución:**
-1. `main.go` parsea flags y llama `config.Load(path)`
-2. Llama `checker.RunAll(targets, timeout)` → lanza una goroutine por target
-3. Cada goroutine ejecuta `checkOne()` y envía `Result` a un canal con buffer
-4. `RunAll` recoge resultados del canal hasta que se cierra (WaitGroup cierra el canal)
-5. `checker.PrintResults(results, format)` imprime y devuelve `allOK bool`
-6. Si `!allOK` → `os.Exit(1)` (exit code para CI)
+## Decisiones de diseño clave
 
-## Concurrencia
+| Decisión | Razón |
+|---|---|
+| SQLite + WAL | Local-first, zero-dependency, CLI y server comparten BD |
+| `modernc.org/sqlite` | Pure-Go, sin CGO, compilación estática y cross-compile trivial |
+| `MaxOpenConns=1` | SQLite serializa escrituras; un pool mayor solo añade contención |
+| ULIDs para monitores | Ordenables por tiempo, URL-safe, sin coordinación |
+| INTEGER autoincrement para checks | Alto volumen, no expuestos externamente |
+| Timestamps como epoch (ms) | SQLite no tiene tipo nativo DATE; UnixMilli es inequívoco |
+| `Reloader` interface en `internal/api` | Evita dependencia circular api → scheduler |
+| `CheckFn` inyectable en Scheduler | Testabilidad sin mocks de interfaz |
+| huma v2 + chi | OpenAPI 3.1 auto-generado, RFC 7807 nativo, zero boilerplate |
+| Frontend embebido en binario | Deploy de un único fichero, sin servidor estático externo |
 
-`RunAll` usa **WaitGroup + canal con buffer**: el canal comunica resultados entre goroutines (patrón idiomático Go), el WaitGroup controla cuándo cerrar el canal. Ver comentarios extensos en `checker.go` sobre por qué no se usa mutex.
+## Flujo de ejecución del servidor
 
-Trampa del closure en loops: cada goroutine recibe `target` como **argumento** (copia por valor), no por captura de variable del loop.
-
-## Módulo Go
-
-Módulo: `github.com/your-username/pulse` (placeholder — cambiar al hacer fork).
-Dependencias: `spf13/cobra` (CLI), `gopkg.in/yaml.v3` (YAML).
-Compilación estática por defecto: el binario no requiere librerías del SO en destino.
-Cross-compile: `GOOS=linux GOARCH=amd64 go build -o dist/pulse-linux-amd64 ./cmd/pulse/`
+```
+main() → run()
+  ├── loadConfig() — env vars PULSE_*
+  ├── sqlitestore.Open() + RunMigrations()
+  ├── scheduler.New(monitorRepo, checkRepo, checker.CheckMonitor, metrics)
+  ├── sched.Start(ctx) — goroutine: Reload() cada 30s + goroutine por monitor
+  ├── runCleanup(ctx, checkRepo, retentionDays) — goroutine: DELETE cada hora
+  └── http.Server → buildRouter()
+        ├── /healthz, /readyz
+        ├── /metrics (Prometheus)
+        ├── /api/v1/* (huma)
+        └── /* (SPA React embebida)
+```
 
 ## Tests
 
-Los tests de `checker` usan `httptest.NewServer` para levantar servidores HTTP reales en loopback (no mocks de interfaz). Los tests de `config` usan ficheros temporales con `os.CreateTemp`.
+- **Store**: tests de integración contra SQLite real en `t.TempDir()` — no mocks
+- **API**: tests de integración con `httptest`, router completo, BD real en TempDir
+- **Scheduler**: mock `CheckFn` inyectado + `atomic.Int32` para contar llamadas
+- **Checker**: `httptest.NewServer` real en loopback para cada escenario
+- `-race` activado en `make test` para detectar data races
 
-El `-race` flag en `make test` activa el detector de race conditions de Go.
+## Variables de entorno del servidor
+
+| Variable | Defecto | Descripción |
+|---|---|---|
+| `PULSE_DB_PATH` | `./pulse.db` | Ruta al fichero SQLite |
+| `PULSE_LISTEN_ADDR` | `:8080` | Dirección de escucha |
+| `PULSE_LOG_LEVEL` | `info` | debug / info / warn / error |
+| `PULSE_LOG_FORMAT` | `json` | json / text |
+| `PULSE_CHECKS_RETENTION_DAYS` | `90` | Días de historial a conservar |
