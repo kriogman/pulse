@@ -99,6 +99,14 @@ func RegisterRoutes(h huma.API, monitors store.MonitorRepository, checks store.C
 		Summary:     "Historial de checks de un monitor",
 		Tags:        []string{"Checks"},
 	}, a.listChecks)
+
+	huma.Register(h, huma.Operation{
+		OperationID: "monitor-stats",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/monitors/{id}/stats",
+		Summary:     "Estadísticas de uptime y latencia de un monitor",
+		Tags:        []string{"Checks"},
+	}, a.monitorStats)
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────
@@ -244,6 +252,46 @@ func (a *API) listChecks(ctx context.Context, input *ListChecksInput) (*CheckLis
 	resp.Body.Data = data
 	resp.Body.Total = len(data)
 	return resp, nil
+}
+
+func (a *API) monitorStats(ctx context.Context, input *MonitorStatsInput) (*StatsResponse, error) {
+	to := time.Now()
+	from := to.Add(-periodDuration(input.Period))
+
+	s, err := a.checks.Stats(ctx, input.ID, from, to)
+	if err != nil {
+		slog.ErrorContext(ctx, "calculando stats", "monitor_id", input.ID, "error", err)
+		return nil, huma.Error500InternalServerError("error calculando estadísticas")
+	}
+	period := input.Period
+	if period == "" {
+		period = "24h"
+	}
+	return &StatsResponse{Body: StatsOutput{
+		TotalChecks:   s.TotalChecks,
+		UpCount:       s.UpCount,
+		DownCount:     s.DownCount,
+		DegradedCount: s.DegradedCount,
+		UptimePct:     s.UptimePct,
+		AvgDurationMs: s.AvgDurationMs,
+		MaxDurationMs: s.MaxDurationMs,
+		Period:        period,
+		From:          from,
+		To:            to,
+	}}, nil
+}
+
+func periodDuration(p string) time.Duration {
+	switch p {
+	case "1h":
+		return time.Hour
+	case "7d":
+		return 7 * 24 * time.Hour
+	case "30d":
+		return 30 * 24 * time.Hour
+	default:
+		return 24 * time.Hour
+	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

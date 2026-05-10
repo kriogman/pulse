@@ -45,3 +45,16 @@ export interface CheckListResponse {
   data: CheckOutput[]
   total: number
 }
+
+export interface MonitorStats {
+  total_checks: number
+  up_count: number
+  down_count: number
+  degraded_count: number
+  uptime_pct: number
+  avg_duration_ms: number
+  max_duration_ms: number
+  period: string
+  from: string
+  to: string
+}

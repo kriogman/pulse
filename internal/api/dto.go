@@ -2,6 +2,30 @@ package api
 
 import "time"
 
+// ── Stats ──────────────────────────────────────────────────────────────────
+
+type MonitorStatsInput struct {
+	ID     string `path:"id"`
+	Period string `query:"period" enum:"1h,24h,7d,30d" doc:"Período de análisis (defecto: 24h)"`
+}
+
+type StatsOutput struct {
+	TotalChecks   int       `json:"total_checks"`
+	UpCount       int       `json:"up_count"`
+	DownCount     int       `json:"down_count"`
+	DegradedCount int       `json:"degraded_count"`
+	UptimePct     float64   `json:"uptime_pct"`
+	AvgDurationMs int64     `json:"avg_duration_ms"`
+	MaxDurationMs int64     `json:"max_duration_ms"`
+	Period        string    `json:"period"`
+	From          time.Time `json:"from"`
+	To            time.Time `json:"to"`
+}
+
+type StatsResponse struct {
+	Body StatsOutput
+}
+
 // ── Request bodies ────────────────────────────────────────────────────────
 
 // MonitorBody es el cuerpo de peticiones POST y PUT.

@@ -3,6 +3,7 @@ import type {
   MonitorOutput,
   MonitorListResponse,
   CheckListResponse,
+  MonitorStats,
 } from '../types'
 
 const BASE = '/api/v1'
@@ -41,6 +42,14 @@ export const api = {
       request<MonitorOutput>(`/monitors/${id}/resume`, { method: 'POST' }),
   },
   checks: {
-    list: (id: string) => request<CheckListResponse>(`/monitors/${id}/checks`),
+    list: (id: string, params?: { from?: string; limit?: number }) => {
+      const q = new URLSearchParams()
+      if (params?.from) q.set('from', params.from)
+      if (params?.limit) q.set('limit', String(params.limit))
+      const qs = q.toString()
+      return request<CheckListResponse>(`/monitors/${id}/checks${qs ? `?${qs}` : ''}`)
+    },
+    stats: (id: string, period = '24h') =>
+      request<MonitorStats>(`/monitors/${id}/stats?period=${period}`),
   },
 }

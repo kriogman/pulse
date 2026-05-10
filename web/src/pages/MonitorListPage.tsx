@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { MonitorBody, MonitorOutput } from '../types'
@@ -19,6 +19,19 @@ export default function MonitorListPage() {
     queryFn: () => api.monitors.list(),
     refetchInterval: 30_000,
   })
+
+  // Stats de uptime (24h) por cada monitor, en paralelo
+  const statsQueries = useQueries({
+    queries: (data?.data ?? []).map(m => ({
+      queryKey: ['stats', m.id, '24h'],
+      queryFn: () => api.checks.stats(m.id, '24h'),
+      staleTime: 60_000,
+    })),
+  })
+  const uptimeOf = (id: string) => {
+    const idx = (data?.data ?? []).findIndex(m => m.id === id)
+    return idx >= 0 ? statsQueries[idx]?.data : undefined
+  }
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['monitors'] })
 
@@ -100,7 +113,7 @@ export default function MonitorListPage() {
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  {['Nombre', 'Tipo', 'URL objetivo', 'Intervalo', 'Timeout', 'Estado', 'Acciones'].map(h => (
+                  {['Nombre', 'Tipo', 'URL objetivo', 'Intervalo', 'Timeout', 'Estado', 'Uptime 24h', 'Acciones'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
                       {h}
                     </th>
@@ -134,6 +147,23 @@ export default function MonitorListPage() {
                         />
                         {m.enabled ? 'activo' : 'pausado'}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {(() => {
+                        const s = uptimeOf(m.id)
+                        if (!s) return <span className="text-xs text-gray-300">—</span>
+                        const color =
+                          s.uptime_pct >= 99
+                            ? 'text-green-600'
+                            : s.uptime_pct >= 95
+                              ? 'text-yellow-600'
+                              : 'text-red-600'
+                        return (
+                          <span className={`text-sm font-medium ${color}`}>
+                            {s.uptime_pct.toFixed(1)}%
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">

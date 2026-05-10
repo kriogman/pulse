@@ -63,6 +63,32 @@ func (r *checkRepository) ListByMonitor(ctx context.Context, monitorID string, f
 	return checks, rows.Err()
 }
 
+func (r *checkRepository) Stats(ctx context.Context, monitorID string, from, to time.Time) (*domain.CheckStats, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status = 'up'       THEN 1 ELSE 0 END), 0) AS up_count,
+			COALESCE(SUM(CASE WHEN status = 'down'     THEN 1 ELSE 0 END), 0) AS down_count,
+			COALESCE(SUM(CASE WHEN status = 'degraded' THEN 1 ELSE 0 END), 0) AS degraded_count,
+			COALESCE(CAST(AVG(duration_ms) AS INTEGER), 0)                    AS avg_duration,
+			COALESCE(MAX(duration_ms), 0)                                     AS max_duration
+		FROM checks
+		WHERE monitor_id = ? AND started_at BETWEEN ? AND ?`,
+		monitorID, from.UnixMilli(), to.UnixMilli(),
+	)
+
+	var s domain.CheckStats
+	var avgDur int64
+	if err := row.Scan(&s.TotalChecks, &s.UpCount, &s.DownCount, &s.DegradedCount, &avgDur, &s.MaxDurationMs); err != nil {
+		return nil, fmt.Errorf("stats for monitor %s: %w", monitorID, err)
+	}
+	s.AvgDurationMs = avgDur
+	if s.TotalChecks > 0 {
+		s.UptimePct = float64(s.UpCount) / float64(s.TotalChecks) * 100
+	}
+	return &s, nil
+}
+
 func (r *checkRepository) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	result, err := r.db.ExecContext(ctx,
 		`DELETE FROM checks WHERE started_at < ?`, cutoff.UnixMilli())

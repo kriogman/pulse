@@ -11,6 +11,17 @@ const (
 	CheckStatusDegraded CheckStatus = "degraded"
 )
 
+// CheckStats resume el rendimiento de un monitor en un período de tiempo.
+type CheckStats struct {
+	TotalChecks   int
+	UpCount       int
+	DownCount     int
+	DegradedCount int
+	UptimePct     float64
+	AvgDurationMs int64
+	MaxDurationMs int64
+}
+
 // Check es un registro inmutable de una ejecución de health check.
 // IDs como INTEGER autoincrement: alto volumen, no se exponen al exterior.
 type Check struct {

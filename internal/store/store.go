@@ -21,6 +21,7 @@ type MonitorRepository interface {
 type CheckRepository interface {
 	Save(ctx context.Context, c *domain.Check) error
 	ListByMonitor(ctx context.Context, monitorID string, from, to time.Time, limit int) ([]*domain.Check, error)
+	Stats(ctx context.Context, monitorID string, from, to time.Time) (*domain.CheckStats, error)
 	// DeleteOlderThan elimina checks anteriores a cutoff; usado por la goroutine de retención.
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 }
