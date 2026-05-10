@@ -1,177 +1,188 @@
-# pulse
+# Pulse
 
-CLI en Go que chequea el estado de endpoints HTTP en paralelo.
-Pensado como proyecto de aprendizaje de Go: código comentado, sin abstracciones prematuras.
+[![CI](https://github.com/kriogman/pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/kriogman/pulse/actions/workflows/ci.yml)
+[![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev/dl/)
 
-## Instalación
+Daemon de monitorización de endpoints HTTP con dashboard web, API REST y métricas Prometheus. Se despliega como **un único binario** que embebe el frontend React, las migraciones SQL y todos los assets estáticos — sin dependencias de runtime.
+
+## Características
+
+- **Dashboard web** — lista de monitores, CRUD completo, pause/resume, historial de checks
+- **Gráficas de latencia** — tiempos de respuesta con colores por estado (up/down/degraded), selector de período 1h / 24h / 7d / 30d
+- **Estadísticas de uptime** — uptime %, respuesta media/máxima, contadores por estado
+- **API REST** con OpenAPI 3.1 automático (`/openapi.json`)
+- **Métricas Prometheus** en `/metrics` — histograma de latencia, checks totales, monitores activos
+- **Scheduler persistente** — goroutine por monitor, reload sin reiniciar, checks inmediatamente al arrancar
+- **CLI** — `check` (one-shot desde YAML), `import` (upsert a BD), `list` (tabla de monitores)
+- **SQLite en modo WAL** — local-first, sin servidor de base de datos, compartido entre CLI y daemon
+
+---
+
+## Inicio rápido
+
+### Docker (recomendado)
+
+```bash
+docker run -d \
+  --name pulse \
+  -p 8080:8080 \
+  -v pulse-data:/data \
+  -e PULSE_DB_PATH=/data/pulse.db \
+  ghcr.io/kriogman/pulse:latest
+
+# Abre http://localhost:8080
+```
+
+### docker-compose
+
+```bash
+git clone https://github.com/kriogman/pulse.git
+cd pulse
+docker-compose up -d
+# Dashboard en http://localhost:8080
+```
 
 ### Desde fuente
 
-Requiere [Go 1.21+](https://go.dev/dl/).
+Requiere [Go 1.22+](https://go.dev/dl/) y [Node.js 20+](https://nodejs.org/).
 
 ```bash
-git clone https://github.com/your-username/pulse.git
+git clone https://github.com/kriogman/pulse.git
 cd pulse
-make build          # produce el binario ./pulse
+
+# Instalar dependencias del frontend y compilar
+make web-install
+make web-build
+
+# Compilar el servidor (embebe el frontend)
+make build-server
+
+# Arrancar
+PULSE_DB_PATH=./pulse.db ./pulse-server
+# Dashboard en http://localhost:8080
 ```
 
-### Cross-compilar para otras plataformas
+---
+
+## Servidor
+
+### Variables de entorno
+
+| Variable | Defecto | Descripción |
+|---|---|---|
+| `PULSE_DB_PATH` | `./pulse.db` | Ruta al fichero SQLite |
+| `PULSE_LISTEN_ADDR` | `:8080` | Dirección de escucha |
+| `PULSE_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `PULSE_LOG_FORMAT` | `json` | `json` / `text` |
+| `PULSE_CHECKS_RETENTION_DAYS` | `90` | Días de historial a conservar |
+
+### Endpoints
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/` | Dashboard React |
+| `GET` | `/api/v1/monitors` | Lista monitores (paginado) |
+| `POST` | `/api/v1/monitors` | Crea un monitor |
+| `GET` | `/api/v1/monitors/{id}` | Obtiene un monitor |
+| `PUT` | `/api/v1/monitors/{id}` | Actualiza un monitor |
+| `DELETE` | `/api/v1/monitors/{id}` | Elimina monitor e historial |
+| `POST` | `/api/v1/monitors/{id}/pause` | Pausa un monitor |
+| `POST` | `/api/v1/monitors/{id}/resume` | Reactiva un monitor |
+| `GET` | `/api/v1/monitors/{id}/checks` | Historial de checks |
+| `GET` | `/api/v1/monitors/{id}/stats` | Estadísticas de uptime y latencia |
+| `GET` | `/healthz` | Liveness probe |
+| `GET` | `/readyz` | Readiness probe (verifica BD) |
+| `GET` | `/metrics` | Métricas Prometheus |
+| `GET` | `/openapi.json` | Especificación OpenAPI 3.1 |
+
+---
+
+## CLI
+
+El binario `pulse` permite interactuar con la misma base de datos que usa el servidor (modo WAL de SQLite permite acceso concurrente).
 
 ```bash
-make build-all
-# Genera en dist/:
-#   pulse-linux-amd64
-#   pulse-darwin-arm64
-#   pulse-windows-amd64.exe
+# Compilar
+make build
+
+# Chequeo one-shot desde fichero YAML (útil en CI)
+pulse check --config pulse.yaml --format json
+
+# Importar monitores desde YAML a la BD (idempotente por nombre)
+pulse import --from pulse.yaml --db ./pulse.db
+
+# Listar monitores en la BD
+pulse list --db ./pulse.db
 ```
 
-Go incluye compiladores cruzados de serie: `GOOS` y `GOARCH` controlan el destino.
-El binario resultante es **estático** (no necesita librerías del sistema en el host destino).
-
-## Uso
-
-```bash
-pulse check [flags]
-
-Flags:
-  -c, --config string    ruta al fichero YAML (default: pulse.yaml)
-  -t, --timeout int      timeout en segundos por petición (default: 5)
-      --format string    formato de salida: text | json (default: text)
-```
-
-### Ejemplos
-
-```bash
-# Check básico con config por defecto
-pulse check
-
-# Config personalizada, timeout 10s
-pulse check -c /etc/pulse/prod.yaml --timeout 10
-
-# Salida JSON (útil para pipes o scripts)
-pulse check --format json | jq '.[] | select(.ok == false)'
-```
-
-### Salida en modo `text`
-
-```
-[OK  ] google               https://www.google.com — HTTP 200 — 143ms
-[FAIL] api-interno          https://api.example.com/health — HTTP 503 — 201ms — status esperado 200, recibido 503
-```
-
-### Salida en modo `json`
-
-```json
-[
-  {
-    "name": "google",
-    "url": "https://www.google.com",
-    "status_code": 200,
-    "latency_ms": 143,
-    "ok": true
-  },
-  {
-    "name": "api-interno",
-    "url": "https://api.example.com/health",
-    "status_code": 503,
-    "latency_ms": 201,
-    "ok": false,
-    "reason": "status esperado 200, recibido 503"
-  }
-]
-```
-
-## Formato del fichero de configuración
+### Formato del fichero YAML
 
 ```yaml
 targets:
-  - name: google                        # Identificador legible (requerido)
-    url: https://www.google.com         # URL a consultar (GET)
-    expected_status: 200                # HTTP status esperado
-    max_latency_ms: 500                 # Latencia máxima en ms (0 = sin límite)
+  - name: api-produccion
+    url: https://api.example.com/health
+    expected_status: 200
+    max_latency_ms: 500
+
+  - name: web-principal
+    url: https://example.com
+    expected_status: 200
+    max_latency_ms: 1000
 ```
 
-## Exit codes
+### Exit codes (modo `check`)
 
-| Código | Significado                      |
-|--------|----------------------------------|
-| `0`    | Todos los targets pasaron        |
-| `1`    | Al menos un target falló         |
-
-Útil en pipelines de CI:
+| Código | Significado |
+|---|---|
+| `0` | Todos los endpoints OK |
+| `1` | Al menos un endpoint falló |
 
 ```yaml
-# .gitlab-ci.yml
-health-check:
-  script: ./pulse check -c pulse.yaml
-  # El job falla automáticamente si pulse devuelve exit code 1
+# .github/workflows/smoke.yml
+- name: Health check
+  run: ./pulse check -c pulse.yaml
+  # El job falla si algún endpoint no responde correctamente
 ```
+
+---
 
 ## Desarrollo
 
 ```bash
-make test           # Ejecuta todos los tests con -race detector
-make run            # Ejecuta sin compilar (go run)
+# Terminal 1 — API Go con hot-reload de código
+make dev-server          # escucha en :8080, logs en texto
 
-# Ejecutar un solo test
-go test -v -run TestCheckOne_Timeout ./internal/checker/
+# Terminal 2 — Frontend con hot-reload
+make web-dev             # Vite en :5173, proxy /api → :8080
+
+# Tests
+make test                # go test -v -race ./...
+make lint                # golangci-lint
+
+# Compilar ambos binarios para todas las plataformas
+make build-all
 ```
 
-## Estructura del proyecto
+### Estructura del proyecto
 
 ```
-pulse/
-├── cmd/pulse/main.go          # Punto de entrada; wiring de Cobra + flags
-├── internal/
-│   ├── config/                # Carga y validación del YAML
-│   └── checker/               # Lógica HTTP + concurrencia + output
-├── pulse.yaml                 # Config de ejemplo
-└── Makefile
+cmd/
+  pulse/            → CLI: check / import / list
+  pulse-server/     → Daemon: HTTP + scheduler + métricas
+internal/
+  domain/           → Entidades puras (Monitor, Check, CheckStats)
+  store/            → Interfaces de repositorio
+  store/sqlite/     → Implementación SQLite (pure-Go, sin CGO)
+  api/              → Handlers huma v2, DTOs, OpenAPI
+  scheduler/        → Goroutine por monitor, reload incremental
+  checker/          → Lógica de check HTTP pura e inyectable
+  observability/    → slog, Prometheus, OTel
+migrations/         → SQL embebido con go:embed
+web/                → Frontend React+TypeScript+Vite (embebido en el binario)
 ```
-
-## 🗺️ Roadmap
-
-Este proyecto está en desarrollo activo como proyecto de aprendizaje de Go.
-Las versiones siguen [Semantic Versioning](https://semver.org/).
-
-### ✅ v0.1.0 — MVP
-- [x] CLI básico con subcomando `check` usando Cobra
-- [x] Lectura de targets desde fichero YAML
-- [x] Chequeo paralelo de endpoints con goroutines
-- [x] Output en formato `text` y `json`
-- [x] Exit codes útiles para CI (0 = OK, 1 = algún fallo)
-- [x] Tests unitarios con `httptest`
-- [x] Makefile con build, test y cross-compile
-
-### 🚧 v0.2.0 — Observabilidad básica
-- [ ] Logging estructurado con `log/slog` (stdlib)
-- [ ] Niveles de log configurables (`--log-level`)
-- [ ] Flag `--verbose` para debugging
-
-### 📋 v0.3.0 — Resiliencia
-- [ ] Retries con backoff exponencial (`cenkalti/backoff`)
-- [ ] Configuración de reintentos por target
-- [ ] Circuit breaker opcional para endpoints flaky
-
-### 📋 v0.4.0 — Modo daemon
-- [ ] Subcomando `serve` que ejecuta checks periódicos
-- [ ] Endpoint `/metrics` compatible con Prometheus
-- [ ] Endpoint `/healthz` para liveness del propio daemon
-- [ ] Graceful shutdown con signals (SIGTERM, SIGINT)
-
-### 📋 v0.5.0 — Distribución
-- [ ] Dockerfile multi-stage con `FROM scratch`
-- [ ] GitHub Actions: CI (test + lint con `golangci-lint`)
-- [ ] GitHub Actions: release automático de binarios multiplataforma
-- [ ] Publicación en GitHub Container Registry
-
-### 💡 Ideas futuras (sin versión asignada)
-- [ ] Notificaciones a Slack / Discord / webhook en fallos
-- [ ] Soporte para chequeos TCP y DNS, no solo HTTP
-- [ ] Validación de certificados TLS y días hasta expiración
-- [ ] Helm chart para despliegue en Kubernetes
-- [ ] Dashboard web embebido con estadísticas históricas
 
 ---
 
-Las contribuciones e ideas son bienvenidas vía issues.
+## Roadmap
+
+Ver [ROADMAP.md](./ROADMAP.md) para el plan de fases futuras: alertas y notificaciones, trazas distribuidas, tipos de monitor adicionales (TCP, DNS, TLS), autenticación y alta disponibilidad.
