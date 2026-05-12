@@ -1,6 +1,6 @@
 # Pulse — Roadmap
 
-Pulse empezó como un CLI one-shot de health check y ha evolucionado a un daemon de monitorización completo: servidor HTTP persistente, scheduler con goroutines, API REST con OpenAPI, frontend React embebido en el propio binario Go, gráficas de latencia y estadísticas de uptime.
+Pulse es un daemon de monitorización de endpoints HTTP on-premise: servidor HTTP persistente, scheduler con goroutines, API REST con OpenAPI, frontend React embebido en el propio binario Go, gráficas de latencia y estadísticas de uptime. Un único binario, sin dependencias de runtime.
 
 **Stack actual:** Go 1.22 · huma v2 · SQLite WAL (pure-Go) · Prometheus · OTel · React 18 · TypeScript · Vite · Tailwind CSS v4 · Recharts · Docker distroless
 
@@ -10,7 +10,7 @@ Pulse empezó como un CLI one-shot de health check y ha evolucionado a un daemon
 
 | Fase | Qué se construyó |
 |---|---|
-| 0 · Bootstrap | Repo multi-binario, Makefile, CI (lint/test/govulncheck/docker), Dockerfile distroless |
+| 0 · Bootstrap | Repo, Makefile, CI (lint/test/govulncheck/docker), Dockerfile distroless |
 | 1 · Scheduler | Dominio hexagonal, SQLite WAL, migrations embebidas, scheduler goroutine-por-monitor, métricas Prometheus |
 | 2 · API REST | 9 endpoints CRUD + pause/resume + stats, OpenAPI 3.1 automático, RFC 7807, tests integración |
 | 3 · Dashboard | SPA React+TS embebida en el binario, CRUD monitores, historial de checks, hot-reload en dev |

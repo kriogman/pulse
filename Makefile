@@ -1,20 +1,10 @@
-BINARY        := pulse
 SERVER_BINARY := pulse-server
 DIST          := dist
-MODULE        := github.com/kriogman/pulse
 PULSE_DB_PATH ?= ./pulse.db
-
-# ── CLI ──────────────────────────────────────────────────────────────────────
-
-build:
-	go build -o $(BINARY) ./cmd/pulse/
-
-run:
-	go run ./cmd/pulse/ check
 
 # ── Server ───────────────────────────────────────────────────────────────────
 
-build-server: web-build
+build: web-build
 	CGO_ENABLED=0 go build -o $(SERVER_BINARY) ./cmd/pulse-server/
 
 dev-server:
@@ -37,38 +27,26 @@ web-dev:
 test:
 	go test -v -race ./...
 
-# ── Code generation ──────────────────────────────────────────────────────────
-
-# Requiere sqlc instalado: https://docs.sqlc.dev/en/latest/overview/install.html
-gen-sqlc:
-	sqlc generate
-
-# Fase 3: genera tipos TS desde el spec OpenAPI.
-# gen-api:
-#	npx openapi-typescript api/openapi.yaml -o web/src/api/types.ts
-
-# ── Cross-compilation ─────────────────────────────────────────────────────────
-
-build-all: $(DIST)
-	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o $(DIST)/$(BINARY)-linux-amd64       ./cmd/pulse/
-	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o $(DIST)/$(BINARY)-darwin-arm64      ./cmd/pulse/
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o $(DIST)/$(BINARY)-windows-amd64.exe ./cmd/pulse/
-	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o $(DIST)/$(SERVER_BINARY)-linux-amd64       ./cmd/pulse-server/
-	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o $(DIST)/$(SERVER_BINARY)-darwin-arm64      ./cmd/pulse-server/
-	@ls -lh $(DIST)/
-
-$(DIST):
-	mkdir -p $(DIST)
-
 # ── Lint ─────────────────────────────────────────────────────────────────────
 
 lint:
 	golangci-lint run ./...
 
+# ── Cross-compilation ─────────────────────────────────────────────────────────
+
+build-all: web-build $(DIST)
+	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o $(DIST)/$(SERVER_BINARY)-linux-amd64       ./cmd/pulse-server/
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o $(DIST)/$(SERVER_BINARY)-darwin-arm64      ./cmd/pulse-server/
+	CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -o $(DIST)/$(SERVER_BINARY)-linux-arm64       ./cmd/pulse-server/
+	@ls -lh $(DIST)/
+
+$(DIST):
+	mkdir -p $(DIST)
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
 clean:
-	rm -f $(BINARY) $(SERVER_BINARY)
+	rm -f $(SERVER_BINARY)
 	rm -rf $(DIST) web/dist
 
-.PHONY: build run build-server dev-server web-install web-build web-dev test gen-sqlc build-all lint clean
+.PHONY: build dev-server web-install web-build web-dev test lint build-all clean

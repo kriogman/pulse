@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
-	"github.com/kriogman/pulse/internal/config"
 	"github.com/kriogman/pulse/internal/domain"
 )
 
@@ -17,16 +15,6 @@ import (
 // Añade futuros listeners (email, Slack, webhooks) aquí sin tocar el checker.
 type CheckResultListener interface {
 	OnResult(ctx context.Context, result domain.Check)
-}
-
-// Result es el tipo de salida del CLI, mantenido por compatibilidad.
-type Result struct {
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	StatusCode int    `json:"status_code,omitempty"`
-	LatencyMs  int64  `json:"latency_ms"`
-	OK         bool   `json:"ok"`
-	Reason     string `json:"reason,omitempty"`
 }
 
 // CheckMonitor ejecuta un health check para el monitor dado.
@@ -103,110 +91,4 @@ func httpConfigFrom(m *domain.Monitor) domain.HTTPConfig {
 		cfg.ExpectedStatus = http.StatusOK
 	}
 	return cfg
-}
-
-// RunAll ejecuta checks para todos los targets en paralelo (uso CLI).
-func RunAll(targets []config.Target, timeoutSecs int) []Result {
-	resultsCh := make(chan Result, len(targets))
-	var wg sync.WaitGroup
-
-	for _, target := range targets {
-		wg.Add(1)
-		go func(t config.Target) {
-			defer wg.Done()
-			resultsCh <- checkOne(t, timeoutSecs)
-		}(target)
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
-
-	var results []Result
-	for r := range resultsCh {
-		results = append(results, r)
-	}
-	return results
-}
-
-// checkOne mantiene compatibilidad con los tests y el CLI existente.
-func checkOne(target config.Target, timeoutSecs int) Result {
-	m := &domain.Monitor{
-		ID:        target.Name,
-		Name:      target.Name,
-		Type:      domain.MonitorTypeHTTP,
-		Target:    target.URL,
-		TimeoutMs: timeoutSecs * 1000,
-		Config: map[string]any{
-			"expected_status": target.ExpectedStatus,
-			"max_latency_ms":  target.MaxLatencyMs,
-		},
-	}
-	c := CheckMonitor(context.Background(), m)
-	return checkToResult(c, target.Name, target.URL)
-}
-
-func checkToResult(c domain.Check, name, url string) Result {
-	r := Result{
-		Name:      name,
-		URL:       url,
-		LatencyMs: c.DurationMs,
-		OK:        c.Status == domain.CheckStatusUp,
-	}
-	if c.StatusCode != nil {
-		r.StatusCode = *c.StatusCode
-	}
-	if c.Error != nil {
-		r.Reason = *c.Error
-	}
-	return r
-}
-
-// PrintResults muestra los resultados y devuelve true si todos pasaron (uso CLI).
-func PrintResults(results []Result, format string) bool {
-	allOK := true
-	for _, r := range results {
-		if !r.OK {
-			allOK = false
-		}
-	}
-
-	switch format {
-	case "json":
-		printJSON(results)
-	default:
-		printText(results)
-	}
-
-	return allOK
-}
-
-func printText(results []Result) {
-	for _, r := range results {
-		verdict := "OK  "
-		if !r.OK {
-			verdict = "FAIL"
-		}
-		if r.StatusCode == 0 {
-			fmt.Printf("[%s] %-20s %s — %dms — %s\n",
-				verdict, r.Name, r.URL, r.LatencyMs, r.Reason)
-		} else {
-			line := fmt.Sprintf("[%s] %-20s %s — HTTP %d — %dms",
-				verdict, r.Name, r.URL, r.StatusCode, r.LatencyMs)
-			if r.Reason != "" {
-				line += " — " + r.Reason
-			}
-			fmt.Println(line)
-		}
-	}
-}
-
-func printJSON(results []Result) {
-	output, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		fmt.Printf(`[{"error": "%v"}]`+"\n", err)
-		return
-	}
-	fmt.Println(string(output))
 }

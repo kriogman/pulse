@@ -6,8 +6,7 @@ Guía para Claude Code al trabajar con este repositorio.
 
 ```bash
 # ── Go ──────────────────────────────────────────────────────────────────────
-make build            # Compila CLI → ./pulse
-make build-server     # Compila servidor → ./pulse-server (requiere web-build primero)
+make build            # Compila servidor → ./pulse-server (incluye web-build)
 make test             # go test -v -race ./...
 make lint             # golangci-lint run ./...
 
@@ -34,11 +33,10 @@ cd web && npm install # Tras cambiar package.json
 
 ## Arquitectura
 
-Repositorio multi-binario con arquitectura hexagonal:
+Repositorio de un único binario servidor con arquitectura hexagonal:
 
 ```
 cmd/
-  pulse/           → CLI: check / import / list (Cobra)
   pulse-server/    → Daemon: HTTP API + Scheduler + métricas
 
 internal/
@@ -49,7 +47,6 @@ internal/
   scheduler/       → Goroutine por monitor con time.Ticker, reload incremental
   checker/         → Lógica HTTP pura: CheckMonitor(ctx, *Monitor) → Check
   observability/   → slog, Prometheus metrics, OTel noop tracer
-  config/          → Carga pulse.yaml (usado solo por CLI)
 
 migrations/        → SQL embebido con go:embed, runner propio (sin CGO)
 web/               → Frontend React+TypeScript+Vite (embebido en el binario server)
@@ -63,7 +60,7 @@ web/               → Frontend React+TypeScript+Vite (embebido en el binario se
 
 | Decisión | Razón |
 |---|---|
-| SQLite + WAL | Local-first, zero-dependency, CLI y server comparten BD |
+| SQLite + WAL | Local-first, zero-dependency, sin servidor de base de datos externo |
 | `modernc.org/sqlite` | Pure-Go, sin CGO, compilación estática y cross-compile trivial |
 | `MaxOpenConns=1` | SQLite serializa escrituras; un pool mayor solo añade contención |
 | ULIDs para monitores | Ordenables por tiempo, URL-safe, sin coordinación |

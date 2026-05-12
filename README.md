@@ -97,55 +97,6 @@ PULSE_DB_PATH=./pulse.db ./pulse-server
 
 ---
 
-## CLI
-
-El binario `pulse` permite interactuar con la misma base de datos que usa el servidor (modo WAL de SQLite permite acceso concurrente).
-
-```bash
-# Compilar
-make build
-
-# Chequeo one-shot desde fichero YAML (útil en CI)
-pulse check --config pulse.yaml --format json
-
-# Importar monitores desde YAML a la BD (idempotente por nombre)
-pulse import --from pulse.yaml --db ./pulse.db
-
-# Listar monitores en la BD
-pulse list --db ./pulse.db
-```
-
-### Formato del fichero YAML
-
-```yaml
-targets:
-  - name: api-produccion
-    url: https://api.example.com/health
-    expected_status: 200
-    max_latency_ms: 500
-
-  - name: web-principal
-    url: https://example.com
-    expected_status: 200
-    max_latency_ms: 1000
-```
-
-### Exit codes (modo `check`)
-
-| Código | Significado |
-|---|---|
-| `0` | Todos los endpoints OK |
-| `1` | Al menos un endpoint falló |
-
-```yaml
-# .github/workflows/smoke.yml
-- name: Health check
-  run: ./pulse check -c pulse.yaml
-  # El job falla si algún endpoint no responde correctamente
-```
-
----
-
 ## Desarrollo
 
 ```bash
@@ -159,7 +110,7 @@ make web-dev             # Vite en :5173, proxy /api → :8080
 make test                # go test -v -race ./...
 make lint                # golangci-lint
 
-# Compilar ambos binarios para todas las plataformas
+# Compilar el servidor para todas las plataformas
 make build-all
 ```
 
@@ -167,7 +118,6 @@ make build-all
 
 ```
 cmd/
-  pulse/            → CLI: check / import / list
   pulse-server/     → Daemon: HTTP + scheduler + métricas
 internal/
   domain/           → Entidades puras (Monitor, Check, CheckStats)

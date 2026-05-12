@@ -62,8 +62,6 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Build frontend
         run: cd web && npm ci && npm run build
-      - name: Build CLI
-        run: CGO_ENABLED=0 go build ./cmd/pulse/
       - name: Build Server
         run: CGO_ENABLED=0 go build ./cmd/pulse-server/
       - name: Build Docker image
