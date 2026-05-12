@@ -183,7 +183,7 @@ func registerHealthRoutes(api huma.API, db *sql.DB) {
 		Path:        "/healthz",
 		Summary:     "Liveness probe",
 		Tags:        []string{"Health"},
-	}, func(ctx context.Context, _ *struct{}) (*healthOutput, error) {
+	}, func(_ context.Context, _ *struct{}) (*healthOutput, error) {
 		return &healthOutput{Body: healthBody{Status: "ok"}}, nil
 	})
 

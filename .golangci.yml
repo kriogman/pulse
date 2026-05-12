@@ -14,7 +14,6 @@ linters:
     revive:
       severity: warning
       rules:
-        - name: exported
         - name: var-naming
         - name: unused-parameter
     gosec:
@@ -24,6 +23,8 @@ linters:
       exclude-functions:
         - (io.Closer).Close
         - (*database/sql.Tx).Rollback
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
   exclusions:
     rules:
       - path: "_test\\.go"

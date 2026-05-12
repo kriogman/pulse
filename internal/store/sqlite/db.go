@@ -44,7 +44,7 @@ func Open(path string) (*sql.DB, error) {
 	db.SetMaxIdleConns(1)
 
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("pinging sqlite at %s: %w", path, err)
 	}
 

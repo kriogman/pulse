@@ -26,7 +26,7 @@ func monitorFor(t *testing.T, url string, expectedStatus int, maxLatencyMs int64
 }
 
 func TestCheckMonitor_OK(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -42,7 +42,7 @@ func TestCheckMonitor_OK(t *testing.T) {
 }
 
 func TestCheckMonitor_WrongStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -61,7 +61,7 @@ func TestCheckMonitor_WrongStatus(t *testing.T) {
 }
 
 func TestCheckMonitor_Timeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
@@ -77,7 +77,7 @@ func TestCheckMonitor_Timeout(t *testing.T) {
 }
 
 func TestCheckMonitor_LatencyExceeded(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(150 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -94,7 +94,7 @@ func TestCheckMonitor_LatencyExceeded(t *testing.T) {
 }
 
 func TestCheckMonitor_ZeroMaxLatency(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
