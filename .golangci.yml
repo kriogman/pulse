@@ -6,11 +6,14 @@ linters:
     - gocritic
     - gosec
     - revive
-    - gofumpt
     - govet
     - staticcheck
     - bodyclose
     - noctx
+
+formatters:
+  enable:
+    - gofumpt
   settings:
     revive:
       severity: warning
