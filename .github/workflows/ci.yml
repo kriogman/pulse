@@ -22,7 +22,7 @@ jobs:
           go-version-file: 'go.mod'
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.64.1   # pinned: evita breaking changes de golangci-lint v2
+          version: v1.63.4   # pinned: evita breaking changes de golangci-lint v2
 
   test:
     name: Test

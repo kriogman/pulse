@@ -1,6 +1,6 @@
 module github.com/kriogman/pulse
 
-go 1.25.0
+go 1.25.10
 
 require (
 	github.com/danielgtaylor/huma/v2 v2.37.3
