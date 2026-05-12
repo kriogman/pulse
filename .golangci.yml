@@ -10,10 +10,6 @@ linters:
     - staticcheck
     - bodyclose
     - noctx
-
-formatters:
-  enable:
-    - gofumpt
   settings:
     revive:
       severity: warning
@@ -34,3 +30,7 @@ formatters:
         linters:
           - gosec
           - errcheck
+
+formatters:
+  enable:
+    - gofumpt
