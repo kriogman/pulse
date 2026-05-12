@@ -42,6 +42,7 @@ Antes de abrir nuevas fases hay deuda técnica y UX concreta:
 - [ ] Soporte de etiquetas (tags) en monitores para agrupar y filtrar
 - [ ] `config_json` validado contra esquema por tipo al crear/actualizar un monitor
 - [ ] Test del endpoint de stats (`/monitors/{id}/stats`)
+- [ ] Migrar el store de código SQL escrito a mano a **sqlc**: la infraestructura (`sqlc.yaml`, `internal/store/queries/`) ya está preparada; hay que escribir las queries `.sql` y reemplazar la implementación manual de `internal/store/sqlite/` por el código generado. Beneficio: las queries quedan tipadas y el compilador detecta desajustes entre SQL y Go.
 
 ---
 

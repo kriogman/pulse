@@ -3,6 +3,9 @@
 /pulse
 /pulse-server
 
+# OpenAPI spec — generado automáticamente por huma al arrancar el servidor
+/api/openapi.json
+
 # Base de datos local
 *.db
 *.db-wal
