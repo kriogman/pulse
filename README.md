@@ -1,26 +1,25 @@
 # Pulse
 
 [![CI](https://github.com/kriogman/pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/kriogman/pulse/actions/workflows/ci.yml)
-[![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev/dl/)
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/dl/)
 
-Daemon de monitorización de endpoints HTTP con dashboard web, API REST y métricas Prometheus. Se despliega como **un único binario** que embebe el frontend React, las migraciones SQL y todos los assets estáticos — sin dependencias de runtime.
+On-premise HTTP endpoint monitoring daemon. Web dashboard, REST API and Prometheus metrics in a **single binary** that embeds the React frontend, SQL migrations and all static assets — no runtime dependencies.
 
-## Características
+## Features
 
-- **Dashboard web** — lista de monitores, CRUD completo, pause/resume, historial de checks
-- **Gráficas de latencia** — tiempos de respuesta con colores por estado (up/down/degraded), selector de período 1h / 24h / 7d / 30d
-- **Estadísticas de uptime** — uptime %, respuesta media/máxima, contadores por estado
-- **API REST** con OpenAPI 3.1 automático (`/openapi.json`)
-- **Métricas Prometheus** en `/metrics` — histograma de latencia, checks totales, monitores activos
-- **Scheduler persistente** — goroutine por monitor, reload sin reiniciar, checks inmediatamente al arrancar
-- **CLI** — `check` (one-shot desde YAML), `import` (upsert a BD), `list` (tabla de monitores)
-- **SQLite en modo WAL** — local-first, sin servidor de base de datos, compartido entre CLI y daemon
+- **Web dashboard** — monitor list, full CRUD, pause/resume, check history
+- **Latency charts** — response times colored by status (up/down/degraded), period selector 1h / 24h / 7d / 30d
+- **Uptime statistics** — uptime %, avg/max response time, counters per status
+- **REST API** with automatic OpenAPI 3.1 (`/openapi.json`)
+- **Prometheus metrics** at `/metrics` — latency histogram, total checks, active monitors
+- **Persistent scheduler** — one goroutine per monitor, reload without restart, checks run immediately on startup
+- **SQLite in WAL mode** — no external database server, persisted in a single file
 
 ---
 
-## Inicio rápido
+## Deployment
 
-### Docker (recomendado)
+### Docker
 
 ```bash
 docker run -d \
@@ -29,110 +28,247 @@ docker run -d \
   -v pulse-data:/data \
   -e PULSE_DB_PATH=/data/pulse.db \
   ghcr.io/kriogman/pulse:latest
-
-# Abre http://localhost:8080
 ```
 
-### docker-compose
+Open [http://localhost:8080](http://localhost:8080).
+
+The `pulse-data` volume persists the database across restarts. Without it, data is lost when the container stops.
+
+---
+
+### Docker Compose
 
 ```bash
 git clone https://github.com/kriogman/pulse.git
 cd pulse
 docker-compose up -d
-# Dashboard en http://localhost:8080
 ```
 
-### Desde fuente
-
-Requiere [Go 1.22+](https://go.dev/dl/) y [Node.js 20+](https://nodejs.org/).
+The included `docker-compose.yml` configures the server, a persistent volume and `restart: unless-stopped`.
 
 ```bash
-git clone https://github.com/kriogman/pulse.git
-cd pulse
-
-# Instalar dependencias del frontend y compilar
-make web-install
-make web-build
-
-# Compilar el servidor (embebe el frontend)
-make build-server
-
-# Arrancar
-PULSE_DB_PATH=./pulse.db ./pulse-server
-# Dashboard en http://localhost:8080
+docker-compose logs -f    # stream logs
+docker-compose down       # stop, keep data
+docker-compose down -v    # stop and delete volume
 ```
 
 ---
 
-## Servidor
+### Kubernetes
 
-### Variables de entorno
+The manifests below deploy Pulse in a dedicated namespace with a `PersistentVolumeClaim` for the database.
 
-| Variable | Defecto | Descripción |
+#### 1. Namespace and PersistentVolumeClaim
+
+```yaml
+# pulse-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pulse
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pulse-data
+  namespace: pulse
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+```
+
+#### 2. Deployment
+
+```yaml
+# pulse-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulse
+  namespace: pulse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pulse
+  template:
+    metadata:
+      labels:
+        app: pulse
+    spec:
+      containers:
+        - name: pulse
+          image: ghcr.io/kriogman/pulse:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PULSE_DB_PATH
+              value: /data/pulse.db
+            - name: PULSE_LISTEN_ADDR
+              value: ":8080"
+            - name: PULSE_LOG_LEVEL
+              value: info
+            - name: PULSE_LOG_FORMAT
+              value: json
+            - name: PULSE_CHECKS_RETENTION_DAYS
+              value: "90"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pulse-data
+```
+
+> **Note:** SQLite requires `ReadWriteOnce`. Do not scale `replicas` above 1 with SQLite — if you need multiple replicas, see the [Roadmap](./ROADMAP.md) (Phase 10 — PostgreSQL + leader election).
+
+#### 3. Service
+
+```yaml
+# pulse-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: pulse
+  namespace: pulse
+spec:
+  selector:
+    app: pulse
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+#### 4. Ingress (optional)
+
+```yaml
+# pulse-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pulse
+  namespace: pulse
+spec:
+  rules:
+    - host: pulse.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pulse
+                port:
+                  number: 80
+```
+
+Replace `pulse.example.com` with your domain. If using cert-manager, add the `cert-manager.io/cluster-issuer` annotation and a `tls` block.
+
+#### Apply
+
+```bash
+kubectl apply -f pulse-namespace.yaml
+kubectl apply -f pulse-deployment.yaml
+kubectl apply -f pulse-service.yaml
+kubectl apply -f pulse-ingress.yaml   # optional
+
+kubectl -n pulse rollout status deployment/pulse
+```
+
+---
+
+## Environment variables
+
+| Variable | Default | Description |
 |---|---|---|
-| `PULSE_DB_PATH` | `./pulse.db` | Ruta al fichero SQLite |
-| `PULSE_LISTEN_ADDR` | `:8080` | Dirección de escucha |
+| `PULSE_DB_PATH` | `./pulse.db` | Path to the SQLite file |
+| `PULSE_LISTEN_ADDR` | `:8080` | Listen address |
 | `PULSE_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `PULSE_LOG_FORMAT` | `json` | `json` / `text` |
-| `PULSE_CHECKS_RETENTION_DAYS` | `90` | Días de historial a conservar |
-
-### Endpoints
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/` | Dashboard React |
-| `GET` | `/api/v1/monitors` | Lista monitores (paginado) |
-| `POST` | `/api/v1/monitors` | Crea un monitor |
-| `GET` | `/api/v1/monitors/{id}` | Obtiene un monitor |
-| `PUT` | `/api/v1/monitors/{id}` | Actualiza un monitor |
-| `DELETE` | `/api/v1/monitors/{id}` | Elimina monitor e historial |
-| `POST` | `/api/v1/monitors/{id}/pause` | Pausa un monitor |
-| `POST` | `/api/v1/monitors/{id}/resume` | Reactiva un monitor |
-| `GET` | `/api/v1/monitors/{id}/checks` | Historial de checks |
-| `GET` | `/api/v1/monitors/{id}/stats` | Estadísticas de uptime y latencia |
-| `GET` | `/healthz` | Liveness probe |
-| `GET` | `/readyz` | Readiness probe (verifica BD) |
-| `GET` | `/metrics` | Métricas Prometheus |
-| `GET` | `/openapi.json` | Especificación OpenAPI 3.1 |
+| `PULSE_CHECKS_RETENTION_DAYS` | `90` | Days of check history to retain |
 
 ---
 
-## Desarrollo
+## REST API
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | React dashboard |
+| `GET` | `/api/v1/monitors` | List monitors (paginated) |
+| `POST` | `/api/v1/monitors` | Create a monitor |
+| `GET` | `/api/v1/monitors/{id}` | Get a monitor |
+| `PUT` | `/api/v1/monitors/{id}` | Update a monitor |
+| `DELETE` | `/api/v1/monitors/{id}` | Delete monitor and history |
+| `POST` | `/api/v1/monitors/{id}/pause` | Pause a monitor |
+| `POST` | `/api/v1/monitors/{id}/resume` | Resume a monitor |
+| `GET` | `/api/v1/monitors/{id}/checks` | Check history |
+| `GET` | `/api/v1/monitors/{id}/stats` | Uptime and latency statistics |
+| `GET` | `/healthz` | Liveness probe |
+| `GET` | `/readyz` | Readiness probe (verifies DB) |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/openapi.json` | OpenAPI 3.1 spec |
+
+---
+
+## Development
 
 ```bash
-# Terminal 1 — API Go con hot-reload de código
-make dev-server          # escucha en :8080, logs en texto
+# Terminal 1 — Go server with hot-reload
+make dev-server          # listens on :8080, text logs
 
-# Terminal 2 — Frontend con hot-reload
-make web-dev             # Vite en :5173, proxy /api → :8080
+# Terminal 2 — frontend with hot-reload
+make web-dev             # Vite on :5173, proxies /api → :8080
 
-# Tests
+# Tests and lint
 make test                # go test -v -race ./...
 make lint                # golangci-lint
 
-# Compilar el servidor para todas las plataformas
+# Build server for all platforms
 make build-all
 ```
 
-### Estructura del proyecto
+### Project structure
 
 ```
 cmd/
-  pulse-server/     → Daemon: HTTP + scheduler + métricas
+  pulse-server/     → Daemon: HTTP + scheduler + metrics
 internal/
-  domain/           → Entidades puras (Monitor, Check, CheckStats)
-  store/            → Interfaces de repositorio
-  store/sqlite/     → Implementación SQLite (pure-Go, sin CGO)
-  api/              → Handlers huma v2, DTOs, OpenAPI
-  scheduler/        → Goroutine por monitor, reload incremental
-  checker/          → Lógica de check HTTP pura e inyectable
+  domain/           → Pure entities (Monitor, Check, CheckStats)
+  store/            → Repository interfaces
+  store/sqlite/     → SQLite implementation (pure-Go, no CGO)
+  api/              → huma v2 handlers, DTOs, OpenAPI
+  scheduler/        → Per-monitor goroutine, incremental reload
+  checker/          → Pure HTTP check logic, injectable
   observability/    → slog, Prometheus, OTel
-migrations/         → SQL embebido con go:embed
-web/                → Frontend React+TypeScript+Vite (embebido en el binario)
+migrations/         → Embedded SQL with go:embed
+web/                → React+TypeScript+Vite frontend (embedded in binary)
 ```
 
 ---
 
 ## Roadmap
 
-Ver [ROADMAP.md](./ROADMAP.md) para el plan de fases futuras: alertas y notificaciones, trazas distribuidas, tipos de monitor adicionales (TCP, DNS, TLS), autenticación y alta disponibilidad.
+See [ROADMAP.md](./ROADMAP.md) for the plan of future phases: alerts and notifications, distributed traces, additional monitor types (TCP, DNS, TLS), authentication and high availability.
