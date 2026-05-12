@@ -16,10 +16,14 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /pulse-server \
     ./cmd/pulse-server/
 
+# Crear /data con el UID del usuario nonroot (65532) para que SQLite pueda escribir
+RUN mkdir /data && chown 65532:65532 /data
+
 # Imagen final mínima: solo el binario estático, sin shell ni herramientas
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=builder /pulse-server /pulse-server
+COPY --from=builder --chown=65532:65532 /pulse-server /pulse-server
+COPY --from=builder --chown=65532:65532 /data /data
 
 EXPOSE 8080
 
